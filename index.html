@@ -21,9 +21,11 @@
     <script>
         // --- STORAGE & MOCK DATA ---
         const STORAGE_KEY = 'nightimagens_db_v1';
-        const MAX_INLINE_IMAGE_BYTES = 6 * 1024 * 1024;
+        // Fica abaixo do limite de payload das Vercel Functions (4.5MB), já contando a inflação do base64.
+        const MAX_INLINE_IMAGE_BYTES = 3 * 1024 * 1024;
         const MAX_UPLOAD_IMAGE_BYTES = 25 * 1024 * 1024;
         const MAX_IMAGE_DIMENSION = 2800;
+        const UPLOAD_SECRET = 'night-9f2a1c';
         
         const defaultImages = [
             {
@@ -75,6 +77,38 @@
             if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.includes(',')) return 0;
             const base64 = dataUrl.split(',')[1] || '';
             return Math.ceil((base64.length * 3) / 4);
+        }
+
+        function splitDataUrl(dataUrl) {
+            const match = typeof dataUrl === 'string' && dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+            if (!match) return null;
+            return { contentType: match[1], base64: match[2] };
+        }
+
+        async function uploadImageToServer(dataUrl, filenameHint) {
+            const parts = splitDataUrl(dataUrl);
+            if (!parts) throw new Error('Dados de imagem inválidos para upload.');
+
+            const ext = inferImageExtension(dataUrl);
+            const response = await fetch('/api/upload', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-upload-secret': UPLOAD_SECRET
+                },
+                body: JSON.stringify({
+                    filename: `${filenameHint}.${ext}`,
+                    contentType: parts.contentType,
+                    dataBase64: parts.base64
+                })
+            });
+
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(result.error || 'Falha ao enviar imagem para o servidor.');
+            }
+
+            return result.url;
         }
 
         function formatBytes(bytes) {
@@ -653,37 +687,55 @@
                 }
             };
 
-            window.handleUpload = function(e) {
+            window.handleUpload = async function(e) {
                 e.preventDefault();
                 const nameInput = document.getElementById('img-name').value.trim() || 'Imagem Sem Título';
                 const urlInput = document.getElementById('img-url-input');
                 const base64Data = urlInput.dataset.base64;
                 const directUrl = urlInput.value.trim();
 
-                const finalUrl = directUrl || base64Data;
-                if (!finalUrl) {
+                if (!directUrl && !base64Data) {
                     showNotification('Selecione um arquivo ou insira uma URL de imagem válida!', 'error');
                     return;
                 }
 
-                const newId = generateId();
-                const size = urlInput.dataset.size || (directUrl ? 'URL externa' : '1.5 MB');
+                const submitButton = e.target.querySelector('button[type="submit"]');
+                const originalButtonHtml = submitButton.innerHTML;
+                submitButton.disabled = true;
+                submitButton.innerHTML = 'Enviando...';
 
-                const newImage = {
-                    id: newId,
-                    url: finalUrl,
-                    directUrl: buildDirectImageUrl({ id: newId, url: finalUrl }),
-                    name: nameInput,
-                    size: size,
-                    uploadedAt: new Date().toISOString()
-                };
+                try {
+                    const newId = generateId();
+                    let finalUrl = directUrl;
+                    let size = urlInput.dataset.size || 'URL externa';
 
-                const images = getImages();
-                images.unshift(newImage);
-                saveImages(images);
+                    if (!directUrl && base64Data) {
+                        // Sobe o arquivo pro storage real (Vercel Blob) em vez de guardar só no localStorage,
+                        // senão o link só funciona no navegador de quem fez upload.
+                        finalUrl = await uploadImageToServer(base64Data, newId);
+                        size = urlInput.dataset.size || '1.5 MB';
+                    }
 
-                showNotification(`Imagem enviada com sucesso! ID: ${newId}`);
-                renderAdminView();
+                    const newImage = {
+                        id: newId,
+                        url: finalUrl,
+                        directUrl: buildDirectImageUrl({ id: newId, url: finalUrl }),
+                        name: nameInput,
+                        size: size,
+                        uploadedAt: new Date().toISOString()
+                    };
+
+                    const images = getImages();
+                    images.unshift(newImage);
+                    saveImages(images);
+
+                    showNotification(`Imagem enviada com sucesso! ID: ${newId}`);
+                    renderAdminView();
+                } catch (error) {
+                    showNotification(error.message || 'Falha ao enviar imagem.', 'error');
+                    submitButton.disabled = false;
+                    submitButton.innerHTML = originalButtonHtml;
+                }
             };
 
             window.deleteImage = function(id) {
