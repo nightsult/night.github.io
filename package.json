@@ -1,0 +1,7 @@
+{
+  "name": "nightimagens",
+  "private": true,
+  "dependencies": {
+    "@vercel/blob": "latest"
+  }
+}
