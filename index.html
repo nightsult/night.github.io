@@ -69,6 +69,9 @@
         }
 
         function buildDirectImageUrl(img) {
+            if (img.url && img.url.startsWith('data:image/')) {
+                return `${window.location.origin}/#/${img.id}`;
+            }
             const ext = inferImageExtension(img.url);
             return `${window.location.origin}/api/image/${img.id}.${ext}?src=${encodeURIComponent(img.url)}`;
         }
@@ -533,7 +536,7 @@
                 const base64Data = urlInput.dataset.base64;
                 const directUrl = urlInput.value.trim();
 
-                const finalUrl = base64Data || directUrl;
+                const finalUrl = directUrl || base64Data;
                 if (!finalUrl) {
                     showNotification('Selecione um arquivo ou insira uma URL de imagem válida!', 'error');
                     return;
