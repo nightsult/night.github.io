@@ -46,16 +46,47 @@
             }
         ];
 
+        function inferImageExtension(url) {
+            if (!url) return 'png';
+
+            if (url.startsWith('data:image/')) {
+                const mime = (url.match(/^data:(image\/[a-zA-Z0-9.+-]+);/i) || [])[1] || '';
+                if (mime.includes('jpeg')) return 'jpg';
+                if (mime.includes('svg')) return 'svg';
+                if (mime.includes('webp')) return 'webp';
+                if (mime.includes('gif')) return 'gif';
+                if (mime.includes('png')) return 'png';
+                return 'png';
+            }
+
+            try {
+                const pathname = new URL(url, window.location.origin).pathname;
+                const ext = (pathname.match(/\.([a-zA-Z0-9]{2,5})$/) || [])[1];
+                if (ext) return ext.toLowerCase();
+            } catch (e) {}
+
+            return 'png';
+        }
+
+        function buildDirectImageUrl(img) {
+            const ext = inferImageExtension(img.url);
+            return `${window.location.origin}/api/image/${img.id}.${ext}?src=${encodeURIComponent(img.url)}`;
+        }
+
         function getImages() {
             try {
                 const data = localStorage.getItem(STORAGE_KEY);
                 if (!data) {
-                    localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultImages));
-                    return defaultImages;
+                    const seeded = defaultImages.map(img => ({ ...img, directUrl: buildDirectImageUrl(img) }));
+                    localStorage.setItem(STORAGE_KEY, JSON.stringify(seeded));
+                    return seeded;
                 }
-                return JSON.parse(data);
+                return JSON.parse(data).map(img => ({
+                    ...img,
+                    directUrl: buildDirectImageUrl(img)
+                }));
             } catch (e) {
-                return defaultImages;
+                return defaultImages.map(img => ({ ...img, directUrl: buildDirectImageUrl(img) }));
             }
         }
 
@@ -230,7 +261,7 @@
                                     <div class="relative aspect-video bg-slate-950 overflow-hidden">
                                         <img src="${img.url}" alt="${img.name}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" onerror="this.src='https://placehold.co/600x400/1e293b/94a3b8?text=Erro+na+Imagem'" />
                                         <div class="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3">
-                                            <a href="#/${img.id}" target="_blank" class="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 transition-all">
+                                            <a href="${img.directUrl}" target="_blank" class="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 transition-all">
                                                 <i data-lucide="external-link" class="w-3.5 h-3.5"></i> Abrir Raw (Só a Imagem)
                                             </a>
                                         </div>
@@ -248,7 +279,7 @@
                                                 <i data-lucide="copy" class="w-3.5 h-3.5"></i> Copiar Link
                                             </button>
                                             <a href="#/${img.id}" target="_blank" class="text-xs text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1">
-                                                Ver <i data-lucide="arrow-right" class="w-3 h-3"></i>
+                                                Ver na Página <i data-lucide="arrow-right" class="w-3 h-3"></i>
                                             </a>
                                         </div>
                                     </div>
@@ -265,7 +296,14 @@
             lucide.createIcons();
 
             window.copyDirectLink = function(id) {
-                const fullUrl = window.location.origin + window.location.pathname + '#/' + id;
+                const images = getImages();
+                const img = images.find(item => item.id === id);
+                if (!img) {
+                    showNotification('Imagem não encontrada para copiar o link.', 'error');
+                    return;
+                }
+
+                const fullUrl = img.directUrl || buildDirectImageUrl(img);
                 const tempInput = document.createElement('input');
                 tempInput.value = fullUrl;
                 document.body.appendChild(tempInput);
@@ -439,7 +477,7 @@
                                                 <p class="text-xs text-slate-500">${new Date(img.uploadedAt).toLocaleDateString('pt-BR')}</p>
                                             </div>
                                             <div class="mt-4 pt-3 border-t border-slate-800/60 flex items-center justify-between gap-2">
-                                                <a href="#/${img.id}" target="_blank" class="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-medium flex items-center justify-center gap-1.5 transition-colors">
+                                                <a href="${img.directUrl}" target="_blank" class="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-medium flex items-center justify-center gap-1.5 transition-colors">
                                                     <i data-lucide="external-link" class="w-3.5 h-3.5 text-indigo-400"></i> Ver
                                                 </a>
                                                 <button onclick="deleteImage('${img.id}')" class="px-3 py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 rounded-xl text-xs font-medium flex items-center justify-center transition-colors" title="Excluir imagem">
@@ -507,6 +545,7 @@
                 const newImage = {
                     id: newId,
                     url: finalUrl,
+                    directUrl: buildDirectImageUrl({ id: newId, url: finalUrl }),
                     name: nameInput,
                     size: size,
                     uploadedAt: new Date().toISOString()
