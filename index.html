@@ -21,17 +21,17 @@
     <script>
         // --- STORAGE & MOCK DATA ---
         const STORAGE_KEY = 'nightimagens_db_v1';
-        // Fica abaixo do limite de payload das Vercel Functions (4.5MB), já contando a inflação do base64.
+        const FOLDERS_STORAGE_KEY = 'nightimagens_folders_v1';
+        
         const MAX_INLINE_IMAGE_BYTES = 3 * 1024 * 1024;
         const MAX_UPLOAD_IMAGE_BYTES = 25 * 1024 * 1024;
         const MAX_IMAGE_DIMENSION = 2800;
         const UPLOAD_SECRET = 'night-9f2a1c';
-        const FOLDERS_STORAGE_KEY = 'nightimagens_folders_v1';
-        let activeAdminFolderId = 'all'; // 'all' | 'unassigned' | <folderId>
-
+        
         const defaultImages = [
             {
                 id: 'n8x9q2',
+                folderId: null,
                 url: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=1920&auto=format&fit=crop',
                 name: 'Abstrato Cósmico Neon',
                 size: '1.4 MB',
@@ -39,6 +39,7 @@
             },
             {
                 id: 'k3m9p1',
+                folderId: null,
                 url: 'https://images.unsplash.com/photo-1579783902614-a3fb3927b675?q=80&w=1920&auto=format&fit=crop',
                 name: 'Arte Abstrata Texturizada',
                 size: '2.1 MB',
@@ -46,6 +47,7 @@
             },
             {
                 id: 'z7v2w8',
+                folderId: null,
                 url: 'https://images.unsplash.com/photo-1550684848-fac1c5b4e853?q=80&w=1920&auto=format&fit=crop',
                 name: 'Cyberpunk Neon Estilo',
                 size: '1.8 MB',
@@ -212,15 +214,10 @@
                     return seeded;
                 }
                 const parsedImages = JSON.parse(data);
-                const safeImages = parsedImages.filter(img => {
-                    const isDataImage = typeof img.url === 'string' && img.url.startsWith('data:image/');
-                    return !isDataImage || estimateDataUrlBytes(img.url) <= MAX_INLINE_IMAGE_BYTES;
-                });
-
-                if (safeImages.length !== parsedImages.length) {
-                    localStorage.setItem(STORAGE_KEY, JSON.stringify(safeImages));
-                }
-
+                const safeImages = parsedImages.map(img => ({
+                    folderId: img.folderId || null,
+                    ...img
+                }));
                 return safeImages.map(img => ({
                     ...img,
                     directUrl: buildDirectImageUrl(img)
@@ -234,19 +231,11 @@
             localStorage.setItem(STORAGE_KEY, JSON.stringify(images));
         }
 
-        function generateId() {
-            const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-            let res = '';
-            for (let i = 0; i < 6; i++) {
-                res += chars.charAt(Math.floor(Math.random() * chars.length));
-            }
-            return res;
-        }
-
         function getFolders() {
             try {
                 const data = localStorage.getItem(FOLDERS_STORAGE_KEY);
-                return data ? JSON.parse(data) : [];
+                if (!data) return [];
+                return JSON.parse(data);
             } catch (e) {
                 return [];
             }
@@ -256,16 +245,16 @@
             localStorage.setItem(FOLDERS_STORAGE_KEY, JSON.stringify(folders));
         }
 
-        function generateFolderId() {
+        function generateId() {
             const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-            let res = 'f_';
+            let res = '';
             for (let i = 0; i < 6; i++) {
                 res += chars.charAt(Math.floor(Math.random() * chars.length));
             }
             return res;
         }
 
-        // --- CUSTOM TOAST / MODAL SYSTEM ---
+        // --- CUSTOM TOAST SYSTEM ---
         function showNotification(message, type = 'success') {
             const existing = document.getElementById('toast-notification');
             if (existing) existing.remove();
@@ -300,7 +289,6 @@
             const path = window.location.pathname;
             const hash = window.location.hash;
             
-            // Check if URL matches /<id> (e.g. /n8x9q2 or hash #/n8x9q2 for SPA simulation)
             const cleanPath = path === '/' ? (hash.startsWith('#/') ? hash.replace('#/', '') : '') : path.replace('/', '');
             
             if (cleanPath && cleanPath !== 'admin' && cleanPath !== '') {
@@ -338,7 +326,6 @@
                 return;
             }
 
-            // EXACT REQUIREMENT: "a imagem deve abrir SÓ a imagem e mais nada! e a qualidade precisa ser boa e o tempo de reposta mega rapido"
             app.innerHTML = `
                 <div class="fixed inset-0 bg-black flex items-center justify-center overflow-hidden m-0 p-0">
                     <img src="${img.url}" alt="${img.name}" class="max-w-full max-h-full object-contain select-none cursor-zoom-in transition-transform duration-300" id="raw-img" onclick="toggleZoom()" />
@@ -350,7 +337,6 @@
                 </div>
             `;
             
-            // Zoom toggle helper
             window.toggleZoom = function() {
                 const el = document.getElementById('raw-img');
                 if (el.classList.contains('scale-150')) {
@@ -364,7 +350,7 @@
             lucide.createIcons();
         }
 
-        // --- VIEW 2: HOME / RECENT IMAGES GALLERY ---
+        // --- VIEW 2: HOME GALLERY ---
         function renderHomeView() {
             const images = getImages();
             const app = document.getElementById('app');
@@ -410,45 +396,37 @@
                         <span class="text-xs text-slate-400 bg-slate-900 px-3 py-1 rounded-lg border border-slate-800">${images.length} hospedadas</span>
                     </div>
 
-                    ${images.length === 0 ? `
-                        <div class="text-center py-20 bg-slate-900/40 border border-slate-800/80 rounded-2xl">
-                            <i data-lucide="folder-open" class="w-12 h-12 text-slate-600 mx-auto mb-3"></i>
-                            <h3 class="text-lg font-medium text-slate-300">Nenhuma imagem cadastrada</h3>
-                            <p class="text-sm text-slate-500 mt-1">Acesse o painel admin para fazer o primeiro upload.</p>
-                        </div>
-                    ` : `
-                        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                            ${images.map(img => `
-                                <div class="bg-slate-900/80 border border-slate-800/80 rounded-2xl overflow-hidden group hover:border-indigo-500/40 transition-all shadow-xl flex flex-col">
-                                    <div class="relative aspect-video bg-slate-950 overflow-hidden">
-                                        <img src="${img.url}" alt="${img.name}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" onerror="this.src='https://placehold.co/600x400/1e293b/94a3b8?text=Erro+na+Imagem'" />
-                                        <div class="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3">
-                                            <a href="${img.directUrl}" target="_blank" class="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 transition-all">
-                                                <i data-lucide="external-link" class="w-3.5 h-3.5"></i> Abrir Raw (Só a Imagem)
-                                            </a>
-                                        </div>
-                                    </div>
-                                    <div class="p-4 flex-1 flex flex-col justify-between">
-                                        <div>
-                                            <h3 class="font-semibold text-sm text-slate-200 truncate mb-1" title="${img.name}">${img.name}</h3>
-                                            <div class="flex items-center justify-between text-xs text-slate-400">
-                                                <span class="font-mono text-indigo-300 bg-indigo-950/60 px-2 py-0.5 rounded border border-indigo-800/40">${img.id}</span>
-                                                <span>${img.size || '1.2 MB'}</span>
-                                            </div>
-                                        </div>
-                                        <div class="mt-4 pt-3 border-t border-slate-800/60 flex items-center justify-between">
-                                            <button onclick="copyDirectLink('${img.id}')" class="text-xs text-slate-400 hover:text-indigo-400 flex items-center gap-1.5 transition-colors">
-                                                <i data-lucide="copy" class="w-3.5 h-3.5"></i> Copiar Link
-                                            </button>
-                                            <a href="#/${img.id}" target="_blank" class="text-xs text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1">
-                                                Ver na Página <i data-lucide="arrow-right" class="w-3 h-3"></i>
-                                            </a>
-                                        </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                        ${images.map(img => `
+                            <div class="bg-slate-900/80 border border-slate-800/80 rounded-2xl overflow-hidden group hover:border-indigo-500/40 transition-all shadow-xl flex flex-col">
+                                <div class="relative aspect-video bg-slate-950 overflow-hidden">
+                                    <img src="${img.url}" alt="${img.name}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                                    <div class="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3">
+                                        <a href="${img.directUrl}" target="_blank" class="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 transition-all">
+                                            <i data-lucide="external-link" class="w-3.5 h-3.5"></i> Abrir Raw (Só a Imagem)
+                                        </a>
                                     </div>
                                 </div>
-                            `).join('')}
-                        </div>
-                    `}
+                                <div class="p-4 flex-1 flex flex-col justify-between">
+                                    <div>
+                                        <h3 class="font-semibold text-sm text-slate-200 truncate mb-1" title="${img.name}">${img.name}</h3>
+                                        <div class="flex items-center justify-between text-xs text-slate-400">
+                                            <span class="font-mono text-indigo-300 bg-indigo-950/60 px-2 py-0.5 rounded border border-indigo-800/40">${img.id}</span>
+                                            <span>${img.size || '1.2 MB'}</span>
+                                        </div>
+                                    </div>
+                                    <div class="mt-4 pt-3 border-t border-slate-800/60 flex items-center justify-between">
+                                        <button onclick="copyDirectLink('${img.id}')" class="text-xs text-slate-400 hover:text-indigo-400 flex items-center gap-1.5 transition-colors">
+                                            <i data-lucide="copy" class="w-3.5 h-3.5"></i> Copiar Link
+                                        </button>
+                                        <a href="#/${img.id}" target="_blank" class="text-xs text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1">
+                                            Ver na Página <i data-lucide="arrow-right" class="w-3 h-3"></i>
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
                 </main>
 
                 <footer class="border-t border-slate-800/80 bg-slate-900/40 py-6 mt-12 text-center text-xs text-slate-500">
@@ -460,12 +438,9 @@
             window.copyDirectLink = function(id) {
                 const images = getImages();
                 const img = images.find(item => item.id === id);
-                if (!img) {
-                    showNotification('Imagem não encontrada para copiar o link.', 'error');
-                    return;
-                }
+                if (!img) return;
 
-                const fullUrl = img.directUrl || buildDirectImageUrl(img);
+                const fullUrl = img.directUrl;
                 const tempInput = document.createElement('input');
                 tempInput.value = fullUrl;
                 document.body.appendChild(tempInput);
@@ -476,13 +451,15 @@
             };
         }
 
-        // --- VIEW 3: ADMIN PANEL (LOGIN & UPLOAD/GRID) ---
+        // --- STATE FOR ADMIN FOLDER NAVIGATION ---
+        let currentFolderId = null;
+
+        // --- VIEW 3: ADMIN PANEL (WITH FOLDERS & DRAG & DROP) ---
         function renderAdminView() {
             const app = document.getElementById('app');
             const isLoggedIn = sessionStorage.getItem('night_admin_auth') === 'true';
 
             if (!isLoggedIn) {
-                // Login screen
                 app.innerHTML = `
                     <div class="flex-1 flex items-center justify-center p-4 bg-slate-950">
                         <div class="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl relative overflow-hidden">
@@ -531,7 +508,6 @@
                     const u = document.getElementById('username').value.trim();
                     const p = document.getElementById('password').value.trim();
 
-                    // CREDENTIALS CHECK
                     if (u === 'Night' && p === '78203592') {
                         sessionStorage.setItem('night_admin_auth', 'true');
                         showNotification('Login efetuado com sucesso!');
@@ -543,17 +519,14 @@
                 return;
             }
 
-            // Authenticated Admin Dashboard
-            const images = getImages();
-            const folders = getFolders();
-            if (activeAdminFolderId !== 'all' && activeAdminFolderId !== 'unassigned' && !folders.some(f => f.id === activeAdminFolderId)) {
-                activeAdminFolderId = 'all';
-            }
-            const visibleImages = images.filter(img => {
-                if (activeAdminFolderId === 'all') return true;
-                if (activeAdminFolderId === 'unassigned') return !img.folderId;
-                return img.folderId === activeAdminFolderId;
-            });
+            const allImages = getImages();
+            const allFolders = getFolders();
+
+            // Filter items for current folder view
+            const currentFolders = allFolders.filter(f => f.parentId === currentFolderId);
+            const currentImages = allImages.filter(img => (img.folderId || null) === currentFolderId);
+            const activeFolderObj = allFolders.find(f => f.id === currentFolderId);
+
             app.innerHTML = `
                 <header class="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur-xl sticky top-0 z-40">
                     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -578,12 +551,18 @@
                 </header>
 
                 <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-10">
+                    <!-- UPLOAD SECTION -->
                     <div class="bg-slate-900/80 border border-slate-800/80 rounded-3xl p-6 sm:p-8 shadow-2xl">
-                        <div class="mb-6">
-                            <h2 class="text-xl font-bold text-white flex items-center gap-2">
-                                <i data-lucide="upload-cloud" class="w-5 h-5 text-indigo-400"></i> Upload de Nova Imagem
-                            </h2>
-                            <p class="text-sm text-slate-400 mt-1">Envie arquivos via seletor ou arraste diretamente. Um ID aleatório exclusivo será gerado.</p>
+                        <div class="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                            <div>
+                                <h2 class="text-xl font-bold text-white flex items-center gap-2">
+                                    <i data-lucide="upload-cloud" class="w-5 h-5 text-indigo-400"></i> Upload de Nova Imagem
+                                </h2>
+                                <p class="text-sm text-slate-400 mt-1">Envie arquivos ou arraste direto. Serão enviadas para a pasta atual.</p>
+                            </div>
+                            <div class="text-xs bg-indigo-950/60 border border-indigo-500/30 text-indigo-300 px-3 py-1.5 rounded-xl font-medium self-start sm:self-auto flex items-center gap-2">
+                                <i data-lucide="folder" class="w-4 h-4"></i> Pasta Destino: <span class="text-white font-bold">${activeFolderObj ? activeFolderObj.name : 'Início (Raiz)'}</span>
+                            </div>
                         </div>
 
                         <form id="upload-form" onsubmit="handleUpload(event)" class="space-y-4">
@@ -613,119 +592,152 @@
                                 </div>
                             </div>
 
-                            <div>
-                                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Pasta</label>
-                                <select id="img-folder-select" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-indigo-500 text-sm">
-                                    <option value="">Sem pasta</option>
-                                    ${folders.map(f => `<option value="${f.id}" ${activeAdminFolderId === f.id ? 'selected' : ''}>${f.name}</option>`).join('')}
-                                </select>
-                            </div>
-
                             <button type="submit" class="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-semibold rounded-xl shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2">
-                                <i data-lucide="upload" class="w-4 h-4"></i> Enviar Imagem Agora
+                                <i data-lucide="upload" class="w-4 h-4"></i> Enviar Imagem na Pasta Atual
                             </button>
                         </form>
                     </div>
 
-                    <div class="bg-slate-900/80 border border-slate-800/80 rounded-3xl p-6 sm:p-8 shadow-2xl">
-                        <div class="mb-4">
-                            <h2 class="text-xl font-bold text-white flex items-center gap-2">
-                                <i data-lucide="folder" class="w-5 h-5 text-indigo-400"></i> Pastas
-                            </h2>
-                            <p class="text-sm text-slate-400 mt-1">Crie pastas para organizar suas imagens e filtre a lista abaixo.</p>
-                        </div>
-
-                        <form onsubmit="handleCreateFolder(event)" class="flex items-center gap-3 mb-5">
-                            <input type="text" id="new-folder-name" placeholder="Nome da nova pasta" class="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500 text-sm" />
-                            <button type="submit" class="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm font-medium flex items-center gap-2 transition-all shrink-0">
-                                <i data-lucide="folder-plus" class="w-4 h-4"></i> Criar
-                            </button>
-                        </form>
-
-                        <div class="flex flex-wrap gap-2">
-                            <button onclick="setAdminFolderFilter('all')" class="px-3.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${activeAdminFolderId === 'all' ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-800/60 border-slate-700 text-slate-300 hover:border-indigo-500/60'}">
-                                Todas (${images.length})
-                            </button>
-                            <button onclick="setAdminFolderFilter('unassigned')" class="px-3.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${activeAdminFolderId === 'unassigned' ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-800/60 border-slate-700 text-slate-300 hover:border-indigo-500/60'}">
-                                Sem pasta (${images.filter(img => !img.folderId).length})
-                            </button>
-                            ${folders.map(f => `
-                                <span class="inline-flex items-center rounded-lg border transition-colors overflow-hidden ${activeAdminFolderId === f.id ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-800/60 border-slate-700 text-slate-300'}">
-                                    <button onclick="setAdminFolderFilter('${f.id}')" class="px-3.5 py-1.5 text-xs font-medium hover:opacity-80 transition-opacity">
-                                        ${f.name} (${images.filter(img => img.folderId === f.id).length})
-                                    </button>
-                                    <button onclick="deleteFolder('${f.id}')" title="Excluir pasta" class="px-2 py-1.5 text-xs border-l ${activeAdminFolderId === f.id ? 'border-indigo-500 hover:bg-indigo-700' : 'border-slate-700 hover:bg-slate-700'} transition-colors">
-                                        <i data-lucide="x" class="w-3 h-3"></i>
-                                    </button>
-                                </span>
-                            `).join('')}
-                        </div>
-                    </div>
-
+                    <!-- FOLDERS & IMAGES MANAGEMENT SECTION -->
                     <div>
-                        <div class="flex items-center justify-between mb-6">
-                            <h2 class="text-xl font-bold text-white flex items-center gap-2">
-                                <i data-lucide="grid" class="w-5 h-5 text-indigo-400"></i> Gerenciamento de Imagens (${visibleImages.length})
-                            </h2>
-                            <p class="text-xs text-slate-400">Apague, mova de pasta ou acesse o link raw de cada imagem</p>
+                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                            <div>
+                                <h2 class="text-xl font-bold text-white flex items-center gap-2">
+                                    <i data-lucide="folder-kanban" class="w-5 h-5 text-indigo-400"></i> Gerenciamento de Imagens e Pastas
+                                </h2>
+                                <!-- BREADCRUMB -->
+                                <div class="flex items-center gap-2 mt-2 text-sm text-slate-400">
+                                    <button onclick="navigateToFolder(null)" class="hover:text-indigo-400 flex items-center gap-1 font-medium transition-colors">
+                                        <i data-lucide="home" class="w-3.5 h-3.5"></i> Raiz
+                                    </button>
+                                    ${activeFolderObj ? `
+                                        <span>/</span>
+                                        <span class="text-indigo-300 font-semibold flex items-center gap-1">
+                                            <i data-lucide="folder" class="w-3.5 h-3.5"></i> ${activeFolderObj.name}
+                                        </span>
+                                    ` : ''}
+                                </div>
+                            </div>
+                            
+                            <div class="flex items-center gap-3">
+                                ${currentFolderId !== null ? `
+                                    <button onclick="navigateToFolder(null)" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-medium transition-all border border-slate-700 flex items-center gap-1.5">
+                                        <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i> Voltar Pasta Anterior
+                                    </button>
+                                ` : ''}
+                                <button onclick="openCreateFolderModal()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold transition-all shadow-lg shadow-indigo-600/20 flex items-center gap-2">
+                                    <i data-lucide="folder-plus" class="w-4 h-4"></i> Nova Pasta
+                                </button>
+                            </div>
                         </div>
 
-                        ${visibleImages.length === 0 ? `
-                            <div class="text-center py-16 bg-slate-900/40 border border-slate-800/80 rounded-2xl">
-                                <i data-lucide="inbox" class="w-10 h-10 text-slate-600 mx-auto mb-2"></i>
-                                <p class="text-slate-400 text-sm">Nenhuma imagem nesta pasta.</p>
+                        <!-- DROPZONE AREA BACK TO ROOT IF INSIDE A FOLDER -->
+                        ${currentFolderId !== null ? `
+                            <div ondragover="event.preventDefault()" ondrop="dropImageToFolder(event, null)" class="mb-6 p-4 rounded-2xl border-2 border-dashed border-slate-800 hover:border-indigo-500/50 bg-slate-900/40 text-center text-xs text-slate-400 transition-all">
+                                <i data-lucide="corner-left-up" class="w-4 h-4 mx-auto mb-1 text-indigo-400"></i>
+                                Arraste imagens aqui para movê-las de volta para a <strong>Raiz</strong>
                             </div>
-                        ` : `
-                            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-                                ${visibleImages.map(img => `
-                                    <div class="bg-slate-900/90 border border-slate-800/80 rounded-2xl overflow-hidden shadow-xl flex flex-col group">
-                                        <div class="relative aspect-video bg-slate-950 overflow-hidden">
-                                            <img src="${img.url}" alt="${img.name}" loading="lazy" class="w-full h-full object-cover" />
-                                            <div class="absolute top-2 right-2 bg-slate-950/80 backdrop-blur-md px-2 py-1 rounded-lg text-xs font-mono text-indigo-300 border border-slate-800">
-                                                ${img.id}
+                        ` : ''}
+
+                        <!-- FOLDERS GRID -->
+                        ${currentFolders.length > 0 ? `
+                            <div class="mb-8">
+                                <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
+                                    <i data-lucide="folder" class="w-3.5 h-3.5 text-indigo-400"></i> Pastas (${currentFolders.length})
+                                </h3>
+                                <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                                    ${currentFolders.map(folder => `
+                                        <div 
+                                            onclick="navigateToFolder('${folder.id}')"
+                                            ondragover="event.preventDefault()"
+                                            ondrop="dropImageToFolder(event, '${folder.id}')"
+                                            class="bg-slate-900/90 hover:bg-slate-800/90 border border-slate-800 hover:border-indigo-500/50 rounded-2xl p-4 transition-all cursor-pointer shadow-lg flex items-center justify-between group"
+                                        >
+                                            <div class="flex items-center gap-3 min-w-0">
+                                                <div class="w-10 h-10 rounded-xl bg-indigo-600/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 group-hover:scale-105 transition-transform flex-shrink-0">
+                                                    <i data-lucide="folder-closed" class="w-5 h-5"></i>
+                                                </div>
+                                                <div class="min-w-0">
+                                                    <h4 class="font-semibold text-sm text-slate-200 truncate group-hover:text-indigo-300 transition-colors">${folder.name}</h4>
+                                                    <span class="text-[11px] text-slate-500">Clique para abrir</span>
+                                                </div>
+                                            </div>
+                                            <button onclick="event.stopPropagation(); deleteFolder('${folder.id}')" class="p-2 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors" title="Excluir Pasta">
+                                                <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                            </button>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        ` : ''}
+
+                        <!-- IMAGES GRID -->
+                        <div>
+                            <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
+                                <i data-lucide="image" class="w-3.5 h-3.5 text-indigo-400"></i> Imagens na pasta (${currentImages.length})
+                            </h3>
+                            
+                            ${currentImages.length === 0 && currentFolders.length === 0 ? `
+                                <div class="text-center py-16 bg-slate-900/40 border border-slate-800/80 rounded-2xl">
+                                    <i data-lucide="folder-open" class="w-10 h-10 text-slate-600 mx-auto mb-2"></i>
+                                    <p class="text-slate-400 text-sm">Esta pasta está vazia.</p>
+                                </div>
+                            ` : currentImages.length === 0 ? `
+                                <div class="text-center py-8 bg-slate-900/20 border border-slate-800/40 rounded-2xl">
+                                    <p class="text-slate-500 text-xs">Nenhuma imagem nesta pasta.</p>
+                                </div>
+                            ` : `
+                                <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                                    ${currentImages.map(img => `
+                                        <div 
+                                            draggable="true" 
+                                            ondragstart="handleDragStart(event, '${img.id}')"
+                                            class="bg-slate-900/90 border border-slate-800/80 rounded-2xl overflow-hidden shadow-xl flex flex-col group cursor-grab active:cursor-grabbing"
+                                        >
+                                            <div class="relative aspect-video bg-slate-950 overflow-hidden">
+                                                <img src="${img.url}" alt="${img.name}" loading="lazy" class="w-full h-full object-cover pointer-events-none" />
+                                                <div class="absolute top-2 right-2 bg-slate-950/80 backdrop-blur-md px-2 py-1 rounded-lg text-xs font-mono text-indigo-300 border border-slate-800">
+                                                    ${img.id}
+                                                </div>
+                                            </div>
+                                            <div class="p-4 flex-1 flex flex-col justify-between">
+                                                <div>
+                                                    <h3 class="font-semibold text-sm text-slate-200 truncate mb-1" title="${img.name}">${img.name}</h3>
+                                                    <p class="text-xs text-slate-500">${new Date(img.uploadedAt).toLocaleDateString('pt-BR')}</p>
+                                                </div>
+                                                <div class="mt-4 pt-3 border-t border-slate-800/60 flex items-center justify-between gap-2">
+                                                    <a href="${img.directUrl}" target="_blank" class="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-medium flex items-center justify-center gap-1.5 transition-colors">
+                                                        <i data-lucide="external-link" class="w-3.5 h-3.5 text-indigo-400"></i> Ver
+                                                    </a>
+                                                    <button onclick="deleteImage('${img.id}')" class="px-3 py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 rounded-xl text-xs font-medium flex items-center justify-center transition-colors" title="Excluir imagem">
+                                                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                                    </button>
+                                                </div>
                                             </div>
                                         </div>
-                                        <div class="p-4 flex-1 flex flex-col justify-between">
-                                            <div>
-                                                <h3 class="font-semibold text-sm text-slate-200 truncate mb-1" title="${img.name}">${img.name}</h3>
-                                                <p class="text-xs text-slate-500">${new Date(img.uploadedAt).toLocaleDateString('pt-BR')}</p>
-                                            </div>
-                                            <div class="mt-3">
-                                                <select onchange="moveImageToFolder('${img.id}', this.value)" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-indigo-500">
-                                                    <option value="" ${!img.folderId ? 'selected' : ''}>Sem pasta</option>
-                                                    ${folders.map(f => `<option value="${f.id}" ${img.folderId === f.id ? 'selected' : ''}>${f.name}</option>`).join('')}
-                                                </select>
-                                            </div>
-                                            <div class="mt-3 pt-3 border-t border-slate-800/60 flex items-center justify-between gap-2">
-                                                <a href="${img.directUrl}" target="_blank" class="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-medium flex items-center justify-center gap-1.5 transition-colors">
-                                                    <i data-lucide="external-link" class="w-3.5 h-3.5 text-indigo-400"></i> Ver
-                                                </a>
-                                                <button onclick="deleteImage('${img.id}')" class="px-3 py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/20 rounded-xl text-xs font-medium flex items-center justify-center transition-colors" title="Excluir imagem">
-                                                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                `).join('')}
-                            </div>
-                        `}
+                                    `).join('')}
+                                </div>
+                            `}
+                        </div>
                     </div>
                 </main>
             `;
             lucide.createIcons();
             
             const adminUrlInput = document.getElementById('img-url-input');
-            adminUrlInput.addEventListener('input', function() {
-                if (!this.value.trim()) return;
-                delete this.dataset.base64;
-                delete this.dataset.size;
-                const fileInput = document.getElementById('file-input');
-                if (fileInput) fileInput.value = '';
-                const previewContainer = document.getElementById('upload-preview-container');
-                const dropzoneContent = document.getElementById('upload-dropzone-content');
-                if (previewContainer) previewContainer.classList.add('hidden');
-                if (dropzoneContent) dropzoneContent.classList.remove('hidden');
-            });
+            if (adminUrlInput) {
+                adminUrlInput.addEventListener('input', function() {
+                    if (!this.value.trim()) return;
+                    delete this.dataset.base64;
+                    delete this.dataset.size;
+                    const fileInput = document.getElementById('file-input');
+                    if (fileInput) fileInput.value = '';
+                    const previewContainer = document.getElementById('upload-preview-container');
+                    const dropzoneContent = document.getElementById('upload-dropzone-content');
+                    if (previewContainer) previewContainer.classList.add('hidden');
+                    if (dropzoneContent) dropzoneContent.classList.remove('hidden');
+                });
+            }
 
             window.handleLogout = function() {
                 sessionStorage.removeItem('night_admin_auth');
@@ -733,57 +745,62 @@
                 renderAdminView();
             };
 
-            window.handleCreateFolder = function(e) {
-                e.preventDefault();
-                const input = document.getElementById('new-folder-name');
-                const name = input.value.trim();
-                if (!name) {
-                    showNotification('Digite um nome para a pasta.', 'error');
-                    return;
-                }
-
-                const folders = getFolders();
-                if (folders.some(f => f.name.toLowerCase() === name.toLowerCase())) {
-                    showNotification('Já existe uma pasta com esse nome.', 'error');
-                    return;
-                }
-
-                const newFolder = { id: generateFolderId(), name, createdAt: new Date().toISOString() };
-                folders.push(newFolder);
-                saveFolders(folders);
-                activeAdminFolderId = newFolder.id;
-                showNotification(`Pasta "${name}" criada com sucesso!`);
+            window.navigateToFolder = function(folderId) {
+                currentFolderId = folderId;
                 renderAdminView();
             };
 
-            window.setAdminFolderFilter = function(folderId) {
-                activeAdminFolderId = folderId;
+            window.openCreateFolderModal = function() {
+                const folderName = prompt('Digite o nome da nova pasta:');
+                if (!folderName || !folderName.trim()) return;
+
+                const folders = getFolders();
+                folders.push({
+                    id: generateId(),
+                    parentId: currentFolderId,
+                    name: folderName.trim(),
+                    createdAt: new Date().toISOString()
+                });
+                saveFolders(folders);
+                showNotification('Pasta criada com sucesso!');
                 renderAdminView();
             };
 
             window.deleteFolder = function(folderId) {
-                const folders = getFolders();
-                const folder = folders.find(f => f.id === folderId);
-                if (!folder) return;
+                if (confirm('Tem certeza que deseja apagar esta pasta? Imagens dentro dela voltarão para a raiz.')) {
+                    let folders = getFolders();
+                    // Remove folder and subfolders
+                    folders = folders.filter(f => f.id !== folderId && f.parentId !== folderId);
+                    saveFolders(folders);
 
-                if (!confirm(`Excluir a pasta "${folder.name}"? As imagens dela voltam para "Sem pasta".`)) return;
+                    // Unlink images inside this folder
+                    let images = getImages();
+                    images = images.map(img => img.folderId === folderId ? { ...img, folderId: null } : img);
+                    saveImages(images);
 
-                saveFolders(folders.filter(f => f.id !== folderId));
+                    if (currentFolderId === folderId) {
+                        currentFolderId = null;
+                    }
 
-                const images = getImages();
-                const updatedImages = images.map(img => img.folderId === folderId ? { ...img, folderId: null } : img);
-                saveImages(updatedImages);
-
-                if (activeAdminFolderId === folderId) activeAdminFolderId = 'all';
-                showNotification('Pasta removida. As imagens foram mantidas.');
-                renderAdminView();
+                    showNotification('Pasta excluída com sucesso.');
+                    renderAdminView();
+                }
             };
 
-            window.moveImageToFolder = function(imageId, folderId) {
-                const images = getImages();
-                const updatedImages = images.map(img => img.id === imageId ? { ...img, folderId: folderId || null } : img);
-                saveImages(updatedImages);
-                showNotification('Imagem movida com sucesso.');
+            window.handleDragStart = function(e, imageId) {
+                e.dataTransfer.setData('text/plain', imageId);
+            };
+
+            window.dropImageToFolder = function(e, targetFolderId) {
+                e.preventDefault();
+                const imageId = e.dataTransfer.getData('text/plain');
+                if (!imageId) return;
+
+                let images = getImages();
+                images = images.map(img => img.id === imageId ? { ...img, folderId: targetFolderId } : img);
+                saveImages(images);
+
+                showNotification('Imagem movida com sucesso!');
                 renderAdminView();
             };
 
@@ -798,12 +815,10 @@
                         document.getElementById('preview-img-tag').src = prepared.dataUrl;
                         document.getElementById('preview-filename').textContent = file.name;
                         
-                        // Auto-fill name if empty
                         const nameInput = document.getElementById('img-name');
                         if (!nameInput.value) {
                             nameInput.value = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
                         }
-                        // Save base64 data temporarily in url input dataset or variable
                         const urlInput = document.getElementById('img-url-input');
                         urlInput.dataset.base64 = prepared.dataUrl;
                         urlInput.dataset.size = prepared.sizeLabel;
@@ -829,7 +844,6 @@
                 const urlInput = document.getElementById('img-url-input');
                 const base64Data = urlInput.dataset.base64;
                 const directUrl = urlInput.value.trim();
-                const folderId = document.getElementById('img-folder-select').value || null;
 
                 if (!directUrl && !base64Data) {
                     showNotification('Selecione um arquivo ou insira uma URL de imagem válida!', 'error');
@@ -847,19 +861,17 @@
                     let size = urlInput.dataset.size || 'URL externa';
 
                     if (!directUrl && base64Data) {
-                        // Sobe o arquivo pro storage real (Vercel Blob) em vez de guardar só no localStorage,
-                        // senão o link só funciona no navegador de quem fez upload.
                         finalUrl = await uploadImageToServer(base64Data, newId);
                         size = urlInput.dataset.size || '1.5 MB';
                     }
 
                     const newImage = {
                         id: newId,
+                        folderId: currentFolderId,
                         url: finalUrl,
                         directUrl: buildDirectImageUrl({ id: newId, url: finalUrl }),
                         name: nameInput,
                         size: size,
-                        folderId: folderId,
                         uploadedAt: new Date().toISOString()
                     };
 
@@ -887,7 +899,6 @@
             };
         }
 
-        // Initialize router on load
         window.addEventListener('DOMContentLoaded', handleRoute);
     </script>
 </body>
