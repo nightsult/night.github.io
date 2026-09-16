@@ -175,7 +175,17 @@
                     localStorage.setItem(STORAGE_KEY, JSON.stringify(seeded));
                     return seeded;
                 }
-                return JSON.parse(data).map(img => ({
+                const parsedImages = JSON.parse(data);
+                const safeImages = parsedImages.filter(img => {
+                    const isDataImage = typeof img.url === 'string' && img.url.startsWith('data:image/');
+                    return !isDataImage || estimateDataUrlBytes(img.url) <= MAX_INLINE_IMAGE_BYTES;
+                });
+
+                if (safeImages.length !== parsedImages.length) {
+                    localStorage.setItem(STORAGE_KEY, JSON.stringify(safeImages));
+                }
+
+                return safeImages.map(img => ({
                     ...img,
                     directUrl: buildDirectImageUrl(img)
                 }));
